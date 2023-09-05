@@ -1,6 +1,6 @@
 // contracts/NatureGold.sol
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.9;
+pragma solidity 0.8.9;
 
 import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
@@ -23,17 +23,25 @@ contract NatureGold is
     uint256 constant INITIAL_SUPPLY = 388793750 * (10**18);
     string public metadataURI;
 
+    address public uniswapPair;
+
     mapping(address => uint256) private _buyBlock;
+    uint256 public tradingBlock;
+
+    event PairUpdated(address uniswapPair);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         initialize();
     }
 
+    /**
+     * @dev Initialize the NatureGold contract
+     */
     function initialize() public initializer {
-        __ERC20_init("NatureGold", "NG");
+        __ERC20_init("NaturesGold Token", "NGOLD");
         __AccessControl_init();
-        __ERC20Permit_init("NatureGold");
+        __ERC20Permit_init("NaturesGold Token");
         __ERC20Votes_init();
         __ReentrancyGuard_init();
 
@@ -41,6 +49,15 @@ contract NatureGold is
 
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(MINTER_ROLE, msg.sender);
+    }
+
+    function setUniswapPair(address _pair) external onlyRole(MINTER_ROLE){
+        require(_pair != address(0x0), "Can't set to 0 address");
+        require(_pair != uniswapPair, "Already set to that address");
+
+        uniswapPair = _pair;
+
+        emit PairUpdated(_pair);
     }
 
     /**
@@ -56,6 +73,9 @@ contract NatureGold is
         _mint(to, amount);
     }
 
+    /**
+     * @dev Sets the metadata URI.
+     */
     function setMetadataURI(string memory uri)
         external
         onlyRole(DEFAULT_ADMIN_ROLE)
@@ -63,12 +83,26 @@ contract NatureGold is
         metadataURI = uri;
     }
 
+    /**
+     * @dev Anti-bot transfer function.
+     */
     function _transfer(
         address sender,
         address recipient,
         uint256 amount
-    ) internal override nonReentrant {
+    ) internal virtual override nonReentrant {
         require(_buyBlock[sender] != block.number, "Bad bot!"); // Prevent transfers from addresses that made a purchase in this block
+        
+        if(sender == uniswapPair) {
+            tradingBlock++;
+        }
+
+        if(tradingBlock < 20 && tx.gasprice > block.basefee && sender == uniswapPair){
+            uint256 maxPremium = 3000000000;
+            uint256 excessFee = tx.gasprice - block.basefee;
+
+            require(excessFee < maxPremium, "Stop bribe!");
+        }
 
         _buyBlock[recipient] = block.number; // Record the block number of the purchase for the recipient
         uint256 currentNonce = _getNonce();
@@ -87,6 +121,9 @@ contract NatureGold is
         super._transfer(sender, recipient, adjustedAmount);
     }
 
+    /**
+     * @dev Returns the current nonce.
+     */
     function _getNonce() internal view returns (uint256) {
         return
             uint256(
